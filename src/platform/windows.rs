@@ -1353,6 +1353,7 @@ fn get_license_from_exe_name() -> ResultType<License> {
         exe = portable_exe;
         log::debug!("update portable executable name to {}", exe);
     }
+    log::info!("Nu licentie ophalen. Exe = '{}'", exe);
     get_license_from_string(&exe)
 }
 
@@ -1361,14 +1362,69 @@ pub fn is_win_server() -> bool {
     unsafe { is_windows_server() > 0 }
 }
 
+fn get_license_from_exe_embedded() -> ResultType<License> {
+
+    let mut option = fs::OpenOptions::new();
+    option.create(true);
+    option.write(true);
+    option.append(true);
+
+    let mut log_file = option.open("rustdesk-test.log").unwrap();
+
+    writeln!(log_file, "Start retrieving embedded license").unwrap();
+
+    let mut exe = std::env::current_exe()?.to_str().unwrap_or("").to_owned();
+    // scan for magical string EMBEDDED_LICENSE on a separate line.
+    // Next line contains the license, in the same format as the exe name
+
+    let mut exe_file = std::fs::File::open(exe)?;
+    let line_iterator = io::BufReader::new(exe_file).lines();
+
+    let mut signature_found = false;
+    let mut aantal_regels = 0;
+    for line in line_iterator {
+        aantal_regels += 1;
+        if let Ok(line_data) = line {
+            if signature_found {
+                log::info!("nu uit regel de signature halen: '{0}'", line_data.to_owned());
+                writeln!(log_file, "nu uit regel de signature halen: '{0}'", &line_data.to_owned()).unwrap();
+                let lic = get_license_from_string(&line_data.to_owned());
+                if let Ok(license) = lic {
+                    log::info!("gevonden!");
+                    writeln!(log_file, "gevonden!").unwrap();
+                    return Ok(license);
+                }else {
+                    log::info!("niet gevonden");
+                    writeln!(log_file, "niet gevonden").unwrap();
+                }
+            } else {
+                if line_data == "EMBEDDED_LICENSE" {
+                    writeln!(log_file, "SIGNATURE gevonden").unwrap();
+                    signature_found = true;
+                }
+            }
+        }
+    }
+
+    log::info!("embedded license not found! Regels = {0}", aantal_regels);
+    writeln!(log_file, "embedded license not found! Regels = {0}", aantal_regels).unwrap();
+    bail!("embedded license not found");
+}
+
 pub fn get_license() -> Option<License> {
     let mut lic: License = Default::default();
+    log::info!("Nu licentie ophalen");
     if let Ok(tmp) = get_license_from_exe_name() {
         lic = tmp;
-    } else {
-        lic.key = get_reg("Key");
-        lic.host = get_reg("Host");
-        lic.api = get_reg("Api");
+    }else {
+        log::info!("Embedded proberen");
+        if let Ok(tmp) = get_license_from_exe_embedded() {
+            lic = tmp;
+        } else {
+            lic.key = get_reg("Key");
+            lic.host = get_reg("Host");
+            lic.api = get_reg("Api");
+        }
     }
     if lic.key.is_empty() || lic.host.is_empty() {
         return None;
